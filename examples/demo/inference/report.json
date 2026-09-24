@@ -1,0 +1,78 @@
+{
+  "schema_version": 1,
+  "input_sha256": "a33430b352c2b8b47968fd49092155cbb0291dec710d47df20f00e08ba727066",
+  "n_cells": 240,
+  "features": [
+    "f_progress",
+    "f_branch"
+  ],
+  "times": [
+    0.0,
+    1.0,
+    2.0
+  ],
+  "class_columns": {
+    "p_state_0": "branch_A",
+    "p_state_1": "branch_B"
+  },
+  "terminal_class_mass": {
+    "branch_A": 0.5000000000000002,
+    "branch_B": 0.5000000000000002
+  },
+  "configuration": {
+    "epsilon": 0.5,
+    "tolerance": 1e-08,
+    "max_iterations": 20000,
+    "max_pairs": 4000000,
+    "cost": "mean squared feature distance; no automatic normalization",
+    "solver": "log-domain Sinkhorn; dual warm starts at 8, 4, 2 times epsilon when iteration budget permits",
+    "mass": "positive input masses normalized independently within each time point",
+    "composition": "row-conditional transitions; Markov assumption"
+  },
+  "environment": {
+    "python": "3.12.14",
+    "numpy": "2.3.5",
+    "scipy": "1.17.0",
+    "cellfate": "0.1.0"
+  },
+  "maps": [
+    {
+      "file": "transport_00.npz",
+      "source_time": 0.0,
+      "target_time": 1.0,
+      "source_n": 80,
+      "target_n": 80,
+      "iterations": 40,
+      "marginal_l1_error": 1.1384591273172484e-09,
+      "transport_cost": 0.9488671243699766
+    },
+    {
+      "file": "transport_01.npz",
+      "source_time": 1.0,
+      "target_time": 2.0,
+      "source_n": 80,
+      "target_n": 80,
+      "iterations": 830,
+      "marginal_l1_error": 8.930663148234985e-09,
+      "transport_cost": 1.031352808504935
+    }
+  ],
+  "warnings": [
+    "Snapshot couplings are geometric hypotheses, not observed lineages or causal effects.",
+    "Balanced transport fixes the supplied marginals; it cannot estimate cell proliferation or death.",
+    "Fate probabilities depend on features, sampling, terminal labels and epsilon; they are not calibrated confidence.",
+    "Each pair is matched regardless of time interval; no physical velocity or continuous-time rate is inferred.",
+    "No batch correction or raw RNA preprocessing is performed; choose a shared feature space upstream."
+  ],
+  "batches_by_time": {
+    "0.0": [
+      "synthetic"
+    ],
+    "1.0": [
+      "synthetic"
+    ],
+    "2.0": [
+      "synthetic"
+    ]
+  }
+}

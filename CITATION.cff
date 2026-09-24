@@ -1,0 +1,10 @@
+cff-version: 1.2.0
+message: "Cite this software separately from the methods papers."
+title: "cell-fate-transport"
+type: software
+version: 0.1.0
+license: MIT
+authors:
+  - family-names: Stechmann
+    given-names: Dylan
+repository-code: "https://github.com/dylanstechmann/cell-fate-transport"

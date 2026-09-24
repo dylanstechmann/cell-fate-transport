@@ -1,0 +1,23 @@
+{
+  "kind": "synthetic software fixture",
+  "seed": 0,
+  "scores": [
+    {
+      "time": 0,
+      "n": 80,
+      "brier_branch_B": 0.2625823529977321,
+      "constant_prior_brier": 0.25,
+      "accuracy": 0.575,
+      "note": "no fate information in features"
+    },
+    {
+      "time": 1,
+      "n": 80,
+      "brier_branch_B": 7.665461442557437e-05,
+      "constant_prior_brier": 0.25,
+      "accuracy": 1.0,
+      "note": "branches separated by construction"
+    }
+  ],
+  "interpretation": "Hidden branch labels are independent of time-0 features. Apparent early fate certainty can therefore be false. Later success is constructed geometry, not biological validation."
+}
