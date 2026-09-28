@@ -12,7 +12,7 @@ import scipy
 from scipy.special import entr
 
 from cellfate import __version__
-from cellfate.transport import probability_mass, pull_back_fates, transport
+from cellfate.transport import build_sankey_data, compose_transitions, probability_mass, pull_back_fates, transport
 
 
 def read_cells(path):
@@ -107,6 +107,49 @@ def infer(path, output, *, epsilon=0.5, tolerance=1e-8, max_iterations=20000, ma
     with (output / "fates.csv").open("w", newline="") as handle:
         writer = csv.DictWriter(handle, fieldnames=list(fate_rows[0]), lineterminator="\n")
         writer.writeheader(); writer.writerows(fate_rows)
+
+    if len(levels) > 2:
+        chain_trans = compose_transitions([item.transition for item in maps])
+        chain_coupling = maps[0].source_mass[:, None] * chain_trans
+        chain_file = "composed_chain.npz"
+        np.savez_compressed(
+            output / chain_file,
+            composed_transition=chain_trans,
+            composed_coupling=chain_coupling,
+            source_mass=maps[0].source_mass,
+            target_mass=maps[-1].target_mass,
+            source_ids=np.array([rows[i]["cell_id"] for i in indices[0]]),
+            target_ids=np.array([rows[i]["cell_id"] for i in indices[-1]]),
+            source_time=float(levels[0]),
+            target_time=float(levels[-1]),
+            chain_times=np.array(levels, dtype=float),
+        )
+        report["chain_composition"] = {
+            "file": chain_file,
+            "source_time": float(levels[0]),
+            "target_time": float(levels[-1]),
+            "n_snapshots": len(levels),
+            "source_n": len(indices[0]),
+            "target_n": len(indices[-1]),
+            "note": "Composed transition map across multi-timepoint chain under Markov assumption: T_0->K = T_0->1 @ ... @ T_{K-1}->K",
+        }
+
+        snapshot_states = [[rows[i]["state"] for i in idx] for idx in indices]
+        sankey_data = build_sankey_data(
+            [item.coupling for item in maps],
+            [item.transition for item in maps],
+            snapshot_states,
+            [float(t) for t in levels],
+            [item.source_mass for item in maps],
+        )
+        sankey_file = "sankey.json"
+        (output / sankey_file).write_text(json.dumps(sankey_data, indent=2, allow_nan=False) + "\n")
+        report["sankey"] = {
+            "file": sankey_file,
+            "n_nodes": len(sankey_data["nodes"]),
+            "n_links": len(sankey_data["links"]),
+        }
+
     (output / "report.json").write_text(json.dumps(report, indent=2, allow_nan=False) + "\n")
     lines = ["# Cell-state transport", "", f"{len(rows)} cells, {len(levels)} snapshots; input SHA-256 `{digest}`.", "",
              "| Interval | Source / target cells | Iterations | Marginal L1 error | Cost |",
@@ -114,7 +157,14 @@ def infer(path, output, *, epsilon=0.5, tolerance=1e-8, max_iterations=20000, ma
     for item in report["maps"]:
         lines.append(f"| {item['source_time']:g} → {item['target_time']:g} | {item['source_n']} / {item['target_n']} | "
                      f"{item['iterations']} | {item['marginal_l1_error']:.3g} | {item['transport_cost']:.4f} |")
-    lines += ["", "Class columns: " + ", ".join(f"`{k}` = `{v}`" for k, v in class_columns.items()) + ".", "",
-              "## Interpretation", "", *[f"- {warning}" for warning in report["warnings"]], ""]
+    lines += ["", "Class columns: " + ", ".join(f"`{k}` = `{v}`" for k, v in class_columns.items()) + "."]
+    if len(levels) > 2:
+        lines += [
+            "", "## Multi-Timepoint Chain & Sankey Flows", "",
+            f"Automatically composed {len(levels)} snapshots from t={levels[0]:g} to t={levels[-1]:g}.",
+            f"End-to-end transport coupling saved to `{report['chain_composition']['file']}`.",
+            f"Sankey diagram flow graph saved to `{report['sankey']['file']}` with {report['sankey']['n_nodes']} state nodes and {report['sankey']['n_links']} flux links.",
+        ]
+    lines += ["", "## Interpretation", "", *[f"- {warning}" for warning in report["warnings"]], ""]
     (output / "REPORT.md").write_text("\n".join(lines))
     return report, fate_rows

@@ -115,3 +115,99 @@ def pull_back_fates(transitions, terminal_labels):
             raise ValueError("transition must be finite, nonnegative, row-stochastic and dimensionally aligned")
         result.insert(0, p @ result[0])
     return classes, result
+
+
+def compose_transitions(transitions):
+    """Compose a chain of row-stochastic transitions: T_chain = T_0 @ T_1 @ ... @ T_{n-1}."""
+    if not transitions:
+        raise ValueError("transitions list cannot be empty")
+    chain = np.asarray(transitions[0], dtype=float)
+    if chain.ndim != 2 or not np.isfinite(chain).all() or np.any(chain < 0):
+        raise ValueError("transition must be finite, nonnegative and 2D")
+    for t in transitions[1:]:
+        step = np.asarray(t, dtype=float)
+        if step.ndim != 2 or chain.shape[1] != step.shape[0] or not np.isfinite(step).all() or np.any(step < 0):
+            raise ValueError("adjacent transitions must be dimensionally aligned, finite and nonnegative")
+        chain = chain @ step
+    row_sums = chain.sum(axis=1, keepdims=True)
+    row_sums[row_sums == 0] = 1.0
+    return chain / row_sums
+
+
+def build_sankey_data(couplings, transitions, snapshot_states, snapshot_times, source_masses=None):
+    """Generate node and link structure for Sankey visualization of state transitions across snapshots."""
+    if len(snapshot_states) != len(snapshot_times) or len(snapshot_states) < 2:
+        raise ValueError("need at least 2 snapshots with matched states and times")
+    if len(transitions) != len(snapshot_times) - 1:
+        raise ValueError("transitions count must equal snapshots count - 1")
+
+    nodes = []
+    node_id_to_idx = {}
+    node_idx = 0
+
+    for k, (t, states) in enumerate(zip(snapshot_times, snapshot_states)):
+        unique_states = sorted(set(states))
+        for state in unique_states:
+            nid = f"t{k}_{state}"
+            node_id_to_idx[nid] = node_idx
+            count = sum(1 for s in states if s == state)
+            nodes.append({
+                "id": nid,
+                "node_index": node_idx,
+                "label": f"{state} (t={t:g})",
+                "time": float(t),
+                "time_index": k,
+                "state": state,
+                "cell_count": count,
+            })
+            node_idx += 1
+
+    links = []
+    for k in range(len(transitions)):
+        t_src = float(snapshot_times[k])
+        t_dst = float(snapshot_times[k + 1])
+        src_states = np.asarray(snapshot_states[k])
+        dst_states = np.asarray(snapshot_states[k + 1])
+        coupling = couplings[k] if couplings is not None and k < len(couplings) else None
+        if coupling is None:
+            if source_masses is not None and k < len(source_masses) and source_masses[k] is not None:
+                mass = source_masses[k]
+            else:
+                mass = np.ones(len(src_states)) / len(src_states)
+            coupling = mass[:, None] * transitions[k]
+
+        u_src = sorted(set(src_states))
+        u_dst = sorted(set(dst_states))
+
+        for s_state in u_src:
+            src_mask = src_states == s_state
+            src_id = f"t{k}_{s_state}"
+            for d_state in u_dst:
+                dst_mask = dst_states == d_state
+                dst_id = f"t{k + 1}_{d_state}"
+                flow_val = float(np.sum(coupling[np.ix_(src_mask, dst_mask)]))
+                if flow_val > 1e-9:
+                    links.append({
+                        "source": src_id,
+                        "target": dst_id,
+                        "source_index": node_id_to_idx[src_id],
+                        "target_index": node_id_to_idx[dst_id],
+                        "value": round(flow_val, 6),
+                        "source_time": t_src,
+                        "target_time": t_dst,
+                        "source_state": s_state,
+                        "target_state": d_state,
+                    })
+
+    return {
+        "nodes": nodes,
+        "links": links,
+        "n_snapshots": len(snapshot_times),
+        "snapshot_times": [float(t) for t in snapshot_times],
+        "total_mass": 1.0,
+        "metadata": {
+            "format": "sankey_v1",
+            "description": "State transition flow graph across temporal snapshots derived from optimal transport couplings.",
+        },
+    }
+

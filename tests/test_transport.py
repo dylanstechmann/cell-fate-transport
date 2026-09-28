@@ -114,6 +114,65 @@ class TableTests(unittest.TestCase):
             self.path.write_text(text)
             with self.assertRaises(ValueError): read_cells(self.path)
 
+    def test_compose_transitions_and_sankey_generation(self):
+        from cellfate.transport import build_sankey_data, compose_transitions
+        t0 = np.array([[0.8, 0.2], [0.3, 0.7]])
+        t1 = np.array([[0.6, 0.4], [0.1, 0.9]])
+        chained = compose_transitions([t0, t1])
+        np.testing.assert_allclose(chained, t0 @ t1)
+        np.testing.assert_allclose(chained.sum(axis=1), [1.0, 1.0])
+
+        with self.assertRaises(ValueError):
+            compose_transitions([])
+        with self.assertRaises(ValueError):
+            compose_transitions([t0, np.ones((3, 3))])
+
+        states = [["early", "early"], ["mid_A", "mid_B"], ["term_A", "term_B"]]
+        times = [0.0, 1.0, 2.0]
+        sankey = build_sankey_data(None, [t0, t1], states, times)
+        self.assertEqual(len(sankey["nodes"]), 5)
+        self.assertGreater(len(sankey["links"]), 0)
+        # Sum of flows from t0->t1 must equal 1.0
+        t0_links = [l["value"] for l in sankey["links"] if l["source_time"] == 0.0]
+        self.assertAlmostEqual(sum(t0_links), 1.0, places=5)
+
+    def test_multi_timepoint_chain_and_sankey_pipeline_export(self):
+        # 3 snapshots: t=0, 1, 2
+        csv_text = (
+            "cell_id,time,state,f_x\n"
+            "c0_1,0,early,0.0\n"
+            "c0_2,0,early,0.5\n"
+            "c1_1,1,mid,1.0\n"
+            "c1_2,1,mid,1.5\n"
+            "c2_1,2,terminal_A,2.0\n"
+            "c2_2,2,terminal_B,2.5\n"
+        )
+        chain_csv = self.root / "chain_cells.csv"
+        chain_csv.write_text(csv_text)
+        out_dir = self.root / "chain_out"
+        report, rows = infer(chain_csv, out_dir)
+
+        # Check composed_chain.npz
+        self.assertTrue((out_dir / "composed_chain.npz").is_file())
+        with np.load(out_dir / "composed_chain.npz", allow_pickle=False) as data:
+            self.assertIn("composed_transition", data)
+            self.assertIn("composed_coupling", data)
+            np.testing.assert_array_equal(data["source_ids"], ["c0_1", "c0_2"])
+            np.testing.assert_array_equal(data["target_ids"], ["c2_1", "c2_2"])
+
+        # Check sankey.json
+        self.assertTrue((out_dir / "sankey.json").is_file())
+        import json
+        sankey = json.loads((out_dir / "sankey.json").read_text())
+        self.assertIn("nodes", sankey)
+        self.assertIn("links", sankey)
+        self.assertEqual(len(sankey["nodes"]), 4)  # early, mid, terminal_A, terminal_B
+
+        # Check report.json
+        self.assertIn("chain_composition", report)
+        self.assertIn("sankey", report)
+
 
 if __name__ == "__main__":
     unittest.main()
+
