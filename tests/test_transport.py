@@ -1,7 +1,9 @@
 import csv
+import hashlib
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 
 import numpy as np
 from scipy.optimize import linprog
@@ -83,6 +85,25 @@ class TableTests(unittest.TestCase):
         self.assertEqual([r["p_state_0"] for r in rows], [r["p_state_0"] for r in again])
         with self.assertRaises(FileExistsError):
             infer(self.path, self.root / "first")
+
+    def test_input_hash_identifies_the_parsed_snapshot(self):
+        original = self.path.read_bytes()
+        read_bytes = Path.read_bytes
+        reads = []
+
+        def replace_after_read(path):
+            data = read_bytes(path)
+            reads.append(path)
+            path.write_text("changed after reading\n", encoding="utf-8")
+            return data
+
+        with patch.object(Path, "read_bytes", replace_after_read):
+            rows, features, times, x, mass, digest = read_cells(self.path)
+        self.assertEqual(reads, [self.path])
+        self.assertEqual(digest, hashlib.sha256(original).hexdigest())
+        self.assertEqual(len(rows), 4)
+        self.assertEqual(features, ["f_x"])
+        self.assertNotEqual(self.path.read_bytes(), original)
 
     def test_reject_bad_csv_and_missing_terminal_labels(self):
         for text in ["cell_id,time,state,f_x\na,0,A,1\na,1,B,2\n",

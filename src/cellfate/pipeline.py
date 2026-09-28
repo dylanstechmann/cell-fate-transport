@@ -2,6 +2,7 @@
 
 import csv
 import hashlib
+import io
 import json
 from pathlib import Path
 import platform
@@ -16,7 +17,10 @@ from cellfate.transport import probability_mass, pull_back_fates, transport
 
 def read_cells(path):
     path = Path(path)
-    with path.open(newline="", encoding="utf-8-sig") as handle:
+    raw = path.read_bytes()
+    # Parse exactly the bytes identified by the input hash, even if the file
+    # changes on disk while the report is being prepared.
+    with io.StringIO(raw.decode("utf-8-sig"), newline="") as handle:
         reader = csv.DictReader(handle)
         header = reader.fieldnames or []
         if len(header) != len(set(header)) or not {"cell_id", "time", "state"} <= set(header):
@@ -45,7 +49,7 @@ def read_cells(path):
         raise ValueError("at least two distinct time points are required")
     if any(not rows[i]["state"] for i in np.flatnonzero(times == times.max())):
         raise ValueError("terminal states cannot be blank")
-    return rows, features, times, x, mass, hashlib.sha256(path.read_bytes()).hexdigest()
+    return rows, features, times, x, mass, hashlib.sha256(raw).hexdigest()
 
 
 def infer(path, output, *, epsilon=0.5, tolerance=1e-8, max_iterations=20000, max_pairs=4_000_000):

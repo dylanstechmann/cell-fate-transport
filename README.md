@@ -67,10 +67,14 @@ an appropriate transport metric. Record the preprocessing and its limitations.
 
 - `REPORT.md` and `report.json`: settings, source hash, versions, population
   sizes, convergence diagnostics and limitations.
+
 - `transport_*.npz`: complete coupling, row-conditional transition, normalized
   masses, and explicit source/target IDs. Load with `allow_pickle=False`.
 - `fates.csv`: terminal-state probabilities and entropy for every snapshot.
   `report.json` maps each `p_state_*` column to its state name.
+
+The loader parses the same CSV bytes it hashes, so an input file changed during
+loading cannot make the report hash refer to a different snapshot of the table.
 
 Maps compose under a **Markov assumption**: the current measured state is
 assumed sufficient for the next transition. Snapshot data do not establish that
