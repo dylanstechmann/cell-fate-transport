@@ -126,6 +126,11 @@ class TableTests(unittest.TestCase):
             compose_transitions([])
         with self.assertRaises(ValueError):
             compose_transitions([t0, np.ones((3, 3))])
+        for invalid in [np.zeros((2, 2)), np.array([[0.2, 0.2], [0.5, 0.5]])]:
+            with self.assertRaisesRegex(ValueError, "row-stochastic"):
+                compose_transitions([invalid])
+            with self.assertRaisesRegex(ValueError, "row-stochastic"):
+                compose_transitions([t0, invalid])
 
         states = [["early", "early"], ["mid_A", "mid_B"], ["term_A", "term_B"]]
         times = [0.0, 1.0, 2.0]
@@ -175,4 +180,3 @@ class TableTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

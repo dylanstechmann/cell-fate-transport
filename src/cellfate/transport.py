@@ -110,8 +110,7 @@ def pull_back_fates(transitions, terminal_labels):
     for transition in reversed(transitions):
         p = np.asarray(transition, dtype=float)
         if (p.ndim != 2 or not p.shape[0] or p.shape[1] != result[0].shape[0]
-                or not np.isfinite(p).all() or np.any(p < 0)
-                or not np.allclose(p.sum(axis=1), 1, rtol=0, atol=1e-8)):
+                or not _is_row_stochastic(p)):
             raise ValueError("transition must be finite, nonnegative, row-stochastic and dimensionally aligned")
         result.insert(0, p @ result[0])
     return classes, result
@@ -122,16 +121,26 @@ def compose_transitions(transitions):
     if not transitions:
         raise ValueError("transitions list cannot be empty")
     chain = np.asarray(transitions[0], dtype=float)
-    if chain.ndim != 2 or not np.isfinite(chain).all() or np.any(chain < 0):
-        raise ValueError("transition must be finite, nonnegative and 2D")
+    if not _is_row_stochastic(chain):
+        raise ValueError("transition must be a nonempty finite, nonnegative row-stochastic matrix")
     for t in transitions[1:]:
         step = np.asarray(t, dtype=float)
-        if step.ndim != 2 or chain.shape[1] != step.shape[0] or not np.isfinite(step).all() or np.any(step < 0):
-            raise ValueError("adjacent transitions must be dimensionally aligned, finite and nonnegative")
+        if chain.shape[1] != step.shape[0] or not _is_row_stochastic(step):
+            raise ValueError("adjacent transitions must be dimensionally aligned and row-stochastic")
         chain = chain @ step
-    row_sums = chain.sum(axis=1, keepdims=True)
-    row_sums[row_sums == 0] = 1.0
-    return chain / row_sums
+    if not _is_row_stochastic(chain, atol=1e-7):
+        raise RuntimeError("composed transition lost stochastic row mass")
+    return chain
+
+
+def _is_row_stochastic(matrix, *, atol=1e-8):
+    """Return whether a matrix is a valid conditional-probability map."""
+    if matrix.ndim != 2 or not matrix.shape[0] or not matrix.shape[1]:
+        return False
+    if not np.isfinite(matrix).all() or np.any(matrix < 0):
+        return False
+    row_sums = matrix.sum(axis=1)
+    return bool(np.all(row_sums > 0) and np.allclose(row_sums, 1, rtol=0, atol=atol))
 
 
 def build_sankey_data(couplings, transitions, snapshot_states, snapshot_times, source_masses=None):
@@ -210,4 +219,3 @@ def build_sankey_data(couplings, transitions, snapshot_states, snapshot_times, s
             "description": "State transition flow graph across temporal snapshots derived from optimal transport couplings.",
         },
     }
-
