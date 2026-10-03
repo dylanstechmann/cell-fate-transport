@@ -144,17 +144,23 @@ def _is_row_stochastic(matrix, *, atol=1e-8):
 
 
 def build_sankey_data(couplings, transitions, snapshot_states, snapshot_times, source_masses=None):
-    """Generate node and link structure for Sankey visualization of state transitions across snapshots."""
+    """Generate model-implied Sankey allocations between annotated snapshots."""
     if len(snapshot_states) != len(snapshot_times) or len(snapshot_states) < 2:
         raise ValueError("need at least 2 snapshots with matched states and times")
     if len(transitions) != len(snapshot_times) - 1:
         raise ValueError("transitions count must equal snapshots count - 1")
 
+    labeled_states = [
+        [str(state).strip() if state is not None and str(state).strip()
+         else f"Unlabeled at t={time:g}" for state in states]
+        for states, time in zip(snapshot_states, snapshot_times)
+    ]
+
     nodes = []
     node_id_to_idx = {}
     node_idx = 0
 
-    for k, (t, states) in enumerate(zip(snapshot_times, snapshot_states)):
+    for k, (t, states) in enumerate(zip(snapshot_times, labeled_states)):
         unique_states = sorted(set(states))
         for state in unique_states:
             nid = f"t{k}_{state}"
@@ -175,8 +181,8 @@ def build_sankey_data(couplings, transitions, snapshot_states, snapshot_times, s
     for k in range(len(transitions)):
         t_src = float(snapshot_times[k])
         t_dst = float(snapshot_times[k + 1])
-        src_states = np.asarray(snapshot_states[k])
-        dst_states = np.asarray(snapshot_states[k + 1])
+        src_states = np.asarray(labeled_states[k])
+        dst_states = np.asarray(labeled_states[k + 1])
         coupling = couplings[k] if couplings is not None and k < len(couplings) else None
         if coupling is None:
             if source_masses is not None and k < len(source_masses) and source_masses[k] is not None:
@@ -216,6 +222,7 @@ def build_sankey_data(couplings, transitions, snapshot_states, snapshot_times, s
         "total_mass": 1.0,
         "metadata": {
             "format": "sankey_v1",
-            "description": "State transition flow graph across temporal snapshots derived from optimal transport couplings.",
+            "description": "Model-implied transport allocations across temporal snapshots; links are not observed lineage or cell ancestry.",
+            "unlabeled_state_policy": "Blank annotations are represented as a time-specific unlabeled state.",
         },
     }

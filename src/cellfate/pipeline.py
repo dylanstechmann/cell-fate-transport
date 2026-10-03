@@ -148,6 +148,7 @@ def infer(path, output, *, epsilon=0.5, tolerance=1e-8, max_iterations=20000, ma
             "file": sankey_file,
             "n_nodes": len(sankey_data["nodes"]),
             "n_links": len(sankey_data["links"]),
+            "interpretation": "Model-implied transport allocations from snapshot state labels; not observed lineage or cell ancestry.",
         }
 
     (output / "report.json").write_text(json.dumps(report, indent=2, allow_nan=False) + "\n")
@@ -160,10 +161,10 @@ def infer(path, output, *, epsilon=0.5, tolerance=1e-8, max_iterations=20000, ma
     lines += ["", "Class columns: " + ", ".join(f"`{k}` = `{v}`" for k, v in class_columns.items()) + "."]
     if len(levels) > 2:
         lines += [
-            "", "## Multi-Timepoint Chain & Sankey Flows", "",
+            "", "## Multi-Timepoint Chain & Sankey Allocation", "",
             f"Automatically composed {len(levels)} snapshots from t={levels[0]:g} to t={levels[-1]:g}.",
             f"End-to-end transport coupling saved to `{report['chain_composition']['file']}`.",
-            f"Sankey diagram flow graph saved to `{report['sankey']['file']}` with {report['sankey']['n_nodes']} state nodes and {report['sankey']['n_links']} flux links.",
+            f"Sankey allocation graph saved to `{report['sankey']['file']}` with {report['sankey']['n_nodes']} state nodes and {report['sankey']['n_links']} model-implied links. These are not observed lineage or cell ancestry.",
         ]
     lines += ["", "## Interpretation", "", *[f"- {warning}" for warning in report["warnings"]], ""]
     (output / "REPORT.md").write_text("\n".join(lines))

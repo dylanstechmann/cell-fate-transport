@@ -71,7 +71,7 @@ an appropriate transport metric. Record the preprocessing and its limitations.
 - `transport_*.npz`: complete coupling, row-conditional transition, normalized
   masses, and explicit source/target IDs. Load with `allow_pickle=False`.
 - `composed_chain.npz`: for multi-timepoint runs (>2 snapshots), stores end-to-end composed Markov transitions and couplings.
-- `sankey.json`: state transition flow graph (nodes, links, flow values) across timepoints for downstream Sankey visualization.
+- `sankey.json`: model-implied transport allocations between annotated snapshot states, for downstream Sankey visualization. Blank state annotations are shown as a time-specific unlabeled state; links are not observed lineage or cell ancestry.
 - `fates.csv`: terminal-state probabilities and entropy for every snapshot.
   `report.json` maps each `p_state_*` column to its state name.
 
