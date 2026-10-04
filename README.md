@@ -72,6 +72,9 @@ an appropriate transport metric. Record the preprocessing and its limitations.
   masses, and explicit source/target IDs. Load with `allow_pickle=False`.
 - `composed_chain.npz`: for multi-timepoint runs (>2 snapshots), stores end-to-end composed Markov transitions and couplings.
 - `sankey.json`: model-implied transport allocations between annotated snapshot states, for downstream Sankey visualization. Blank state annotations are shown as a time-specific unlabeled state; links are not observed lineage or cell ancestry.
+  Export validates coupling/map alignment and intermediate mass conservation.
+  Positive allocations retain full precision, including very small flows. The
+  standalone transition-only API propagates source mass through the chain.
 - `fates.csv`: terminal-state probabilities and entropy for every snapshot.
   `report.json` maps each `p_state_*` column to its state name.
 

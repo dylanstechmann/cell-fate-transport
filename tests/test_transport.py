@@ -10,10 +10,43 @@ from scipy.optimize import linprog
 from scipy.spatial.distance import cdist
 
 from cellfate.pipeline import infer, read_cells
-from cellfate.transport import probability_mass, pull_back_fates, transport
+from cellfate.transport import build_sankey_data, compose_transitions, probability_mass, pull_back_fates, transport
 
 
 class TransportTests(unittest.TestCase):
+    def test_sankey_propagates_intermediate_mass_and_preserves_tiny_flows(self):
+        first = np.array([[.9, .1], [.9, .1]])
+        second = np.array([[1 - 1e-10, 1e-10], [0., 1.]])
+        states = [["start", "start"], ["A", "B"], ["X", "Y"]]
+        graph = build_sankey_data(None, [first, second], states, [0, 1, 2])
+        flow = {(link["source_state"], link["target_state"]): link["value"]
+                for link in graph["links"] if link["source_time"] == 1}
+        self.assertAlmostEqual(flow["A", "X"], .9 * (1 - 1e-10), places=15)
+        self.assertAlmostEqual(flow["B", "Y"], .1, places=15)
+        self.assertGreater(flow["A", "Y"], 0)
+        self.assertAlmostEqual(sum(flow.values()), 1, places=15)
+
+    def test_sankey_rejects_invalid_and_inconsistent_external_maps(self):
+        transition = np.eye(2)
+        states = [["A", "B"], ["A", "B"]]
+        invalid = [np.zeros((2, 2)), np.eye(2), np.full((2, 2), np.nan),
+                   np.array([[.75, -.25], [0., .5]]), np.full((1, 2), .5),
+                   np.full((2, 2), .25)]
+        for coupling in invalid:
+            with self.subTest(coupling=coupling):
+                with self.assertRaises(ValueError):
+                    build_sankey_data([coupling], [transition], states, [0, 1])
+        for times in [[1, 0], [0, 0], [0, np.nan]]:
+            with self.assertRaisesRegex(ValueError, "strictly increasing"):
+                build_sankey_data(None, [transition], states, times)
+        with self.assertRaisesRegex(ValueError, "source mass"):
+            build_sankey_data([np.diag([.9, .1])], [transition], states, [0, 1], [[1, 1]])
+        with self.assertRaisesRegex(ValueError, "intermediate snapshot mass"):
+            build_sankey_data([np.diag([.9, .1]), np.diag([.5, .5])],
+                              [transition, transition], states + [states[-1]], [0, 1, 2])
+        with self.assertRaises(ValueError):
+            compose_transitions([transition, np.asarray(.5)])
+
     def test_marginals_and_stochastic_rows_for_unequal_populations(self):
         fit = transport([[0], [1]], [[0], [0.5], [1]], source_mass=[2, 1], target_mass=[1, 2, 3])
         np.testing.assert_allclose(fit.coupling.sum(axis=1), [2/3, 1/3], atol=1e-8)

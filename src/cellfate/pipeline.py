@@ -141,6 +141,7 @@ def infer(path, output, *, epsilon=0.5, tolerance=1e-8, max_iterations=20000, ma
             snapshot_states,
             [float(t) for t in levels],
             [item.source_mass for item in maps],
+            mass_tolerance=max(tolerance, 1e-7),
         )
         sankey_file = "sankey.json"
         (output / sankey_file).write_text(json.dumps(sankey_data, indent=2, allow_nan=False) + "\n")

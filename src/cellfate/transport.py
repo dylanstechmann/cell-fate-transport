@@ -125,7 +125,7 @@ def compose_transitions(transitions):
         raise ValueError("transition must be a nonempty finite, nonnegative row-stochastic matrix")
     for t in transitions[1:]:
         step = np.asarray(t, dtype=float)
-        if chain.shape[1] != step.shape[0] or not _is_row_stochastic(step):
+        if not _is_row_stochastic(step) or chain.shape[1] != step.shape[0]:
             raise ValueError("adjacent transitions must be dimensionally aligned and row-stochastic")
         chain = chain @ step
     if not _is_row_stochastic(chain, atol=1e-7):
@@ -143,12 +143,63 @@ def _is_row_stochastic(matrix, *, atol=1e-8):
     return bool(np.all(row_sums > 0) and np.allclose(row_sums, 1, rtol=0, atol=atol))
 
 
-def build_sankey_data(couplings, transitions, snapshot_states, snapshot_times, source_masses=None):
-    """Generate model-implied Sankey allocations between annotated snapshots."""
+def build_sankey_data(couplings, transitions, snapshot_states, snapshot_times, source_masses=None,
+                      *, mass_tolerance=1e-7):
+    """Generate model-implied allocations without discarding or rounding mass.
+
+    Supplied couplings must agree with the conditional maps. When only maps
+    are supplied, propagate the first source distribution through the chain;
+    resetting every intermediate snapshot to uniform would invent mass.
+    """
     if len(snapshot_states) != len(snapshot_times) or len(snapshot_states) < 2:
         raise ValueError("need at least 2 snapshots with matched states and times")
     if len(transitions) != len(snapshot_times) - 1:
         raise ValueError("transitions count must equal snapshots count - 1")
+    if not np.isfinite(mass_tolerance) or not 0 < mass_tolerance < 1:
+        raise ValueError("mass tolerance must lie in (0, 1)")
+    times = np.asarray(snapshot_times, dtype=float)
+    if times.ndim != 1 or not np.isfinite(times).all() or np.any(np.diff(times) <= 0):
+        raise ValueError("snapshot times must be finite and strictly increasing")
+    snapshot_times = times.tolist()
+    states = [np.asarray(item, dtype=object) for item in snapshot_states]
+    if any(item.ndim != 1 or not item.size for item in states):
+        raise ValueError("snapshot states must be nonempty one-dimensional sequences")
+    n_maps = len(transitions)
+    if couplings is not None and len(couplings) != n_maps:
+        raise ValueError("provide exactly one coupling per interval or None")
+    if source_masses is not None and len(source_masses) != n_maps:
+        raise ValueError("provide exactly one source mass per interval or None")
+    validated_couplings = []
+    previous_target = None
+    for k, transition in enumerate(transitions):
+        step = np.asarray(transition, dtype=float)
+        shape = (len(states[k]), len(states[k + 1]))
+        if not _is_row_stochastic(step) or step.shape != shape:
+            raise ValueError("transitions must be row-stochastic and aligned with snapshot states")
+        supplied_mass = None if source_masses is None else source_masses[k]
+        mass = None if supplied_mass is None else probability_mass(supplied_mass, shape[0])
+        supplied_coupling = None if couplings is None else couplings[k]
+        if supplied_coupling is None:
+            if mass is None:
+                mass = previous_target if previous_target is not None else probability_mass(None, shape[0])
+            coupling = mass[:, None] * step
+        else:
+            coupling = np.asarray(supplied_coupling, dtype=float)
+            if (coupling.shape != shape or not np.isfinite(coupling).all()
+                    or np.any(coupling < 0) or not np.isclose(coupling.sum(), 1, rtol=0, atol=mass_tolerance)):
+                raise ValueError("couplings must be finite, nonnegative, normalized and aligned")
+            row_mass = coupling.sum(axis=1)
+            if np.any(row_mass <= 0):
+                raise ValueError("every coupling source row must carry positive mass")
+            if mass is not None and not np.allclose(row_mass, mass, rtol=0, atol=mass_tolerance):
+                raise ValueError("coupling disagrees with supplied source mass")
+            if not np.allclose(coupling, row_mass[:, None] * step, rtol=0, atol=1e-7):
+                raise ValueError("coupling disagrees with conditional transition")
+        if previous_target is not None and not np.allclose(
+                coupling.sum(axis=1), previous_target, rtol=0, atol=mass_tolerance):
+            raise ValueError("adjacent couplings disagree on intermediate snapshot mass")
+        previous_target = coupling.sum(axis=0)
+        validated_couplings.append(coupling)
 
     labeled_states = [
         [str(state).strip() if state is not None and str(state).strip()
@@ -183,13 +234,7 @@ def build_sankey_data(couplings, transitions, snapshot_states, snapshot_times, s
         t_dst = float(snapshot_times[k + 1])
         src_states = np.asarray(labeled_states[k])
         dst_states = np.asarray(labeled_states[k + 1])
-        coupling = couplings[k] if couplings is not None and k < len(couplings) else None
-        if coupling is None:
-            if source_masses is not None and k < len(source_masses) and source_masses[k] is not None:
-                mass = source_masses[k]
-            else:
-                mass = np.ones(len(src_states)) / len(src_states)
-            coupling = mass[:, None] * transitions[k]
+        coupling = validated_couplings[k]
 
         u_src = sorted(set(src_states))
         u_dst = sorted(set(dst_states))
@@ -201,13 +246,13 @@ def build_sankey_data(couplings, transitions, snapshot_states, snapshot_times, s
                 dst_mask = dst_states == d_state
                 dst_id = f"t{k + 1}_{d_state}"
                 flow_val = float(np.sum(coupling[np.ix_(src_mask, dst_mask)]))
-                if flow_val > 1e-9:
+                if flow_val > 0:
                     links.append({
                         "source": src_id,
                         "target": dst_id,
                         "source_index": node_id_to_idx[src_id],
                         "target_index": node_id_to_idx[dst_id],
-                        "value": round(flow_val, 6),
+                        "value": flow_val,
                         "source_time": t_src,
                         "target_time": t_dst,
                         "source_state": s_state,
@@ -224,5 +269,7 @@ def build_sankey_data(couplings, transitions, snapshot_states, snapshot_times, s
             "format": "sankey_v1",
             "description": "Model-implied transport allocations across temporal snapshots; links are not observed lineage or cell ancestry.",
             "unlabeled_state_policy": "Blank annotations are represented as a time-specific unlabeled state.",
+            "mass_policy": "One normalized distribution per snapshot; all positive allocations are retained at full floating-point precision.",
+            "mass_tolerance": mass_tolerance,
         },
     }
