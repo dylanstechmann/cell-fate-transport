@@ -115,9 +115,31 @@ tests and complete demo on Python 3.10 and 3.12.
 
 Read the [method derivation](docs/METHODS.md) and
 [data/model card](docs/DATA_MODEL_CARD.md) before applying it to real data.
-A useful next study would compare couplings with independently measured lineage
-information, report batch and sampling sensitivity, and evaluate held-out
-time points without using them for feature fitting or parameter selection.
+
+The [public LARRY validation](docs/LARRY_VALIDATION.md) compares predictions with
+independently measured barcode lineage outcomes in mouse hematopoietic culture.
+All local learned transforms use training clones; terminal observations of
+147 held-out clones are excluded from inference. Equal-clone frequency Brier
+scores are **0.5663 at day 2** and **0.4291 at day 4**, versus a fixed training
+terminal-prior baseline of **0.5784**. This modest early improvement and stronger
+later improvement concern sampled clone outcome distributions, not observed
+individual ancestry or human rejuvenation. Read the report for the conditional
+bootstrap intervals, missing pDC reference support and experiment limitations.
+
+The [selection/evaluation plan](docs/LARRY_VALIDATION_PLAN.md) was written before
+metrics. Reproduce with the optional importer (186.75 MB author download, stored
+under ignored `artifacts/`; data bytes are pinned by SHA-256):
+
+```bash
+python -m pip install -e '.[validation]'
+OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 python -m cellfate.lineage_validation \
+  --download --data artifacts/larry-source/LARRY_adata_preprocessed.h5ad \
+  --out artifacts/larry-validation
+```
+
+A further independent experiment should test batch/well sensitivity, fate
+calibration and stability under sampling/epsilon changes. Those checks are
+still needed before biological deployment.
 
 Portfolio links: [regen-benchmark-kit](https://github.com/dylanstechmann/regen-benchmark-kit)
 for supervised evaluation; [senescence-module-score](https://github.com/dylanstechmann/senescence-module-score)
@@ -131,5 +153,7 @@ preprocessing before becoming comparable trajectory features.
 - [Waddington-OT tutorial](https://broadinstitute.github.io/wot/tutorial/), including growth-aware modeling and temporal composition.
 
 MIT for original code and synthetic fixtures. No source-paper code, figures,
-biological data or pretrained weights are redistributed. Cite the methods
-papers separately from this software.
+biological expression matrix or pretrained weights are redistributed. The
+LARRY report contains derived aggregate metrics and provenance; the author's
+external data are not relicensed by this repository. Cite the methods and
+dataset papers separately from this software.

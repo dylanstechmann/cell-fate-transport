@@ -14,6 +14,7 @@ dependencies = ["numpy>=1.24,<3", "scipy>=1.10,<2"]
 
 [project.optional-dependencies]
 plots = ["matplotlib>=3.7,<4"]
+validation = ["h5py>=3.8,<4"]
 
 [project.scripts]
 cellfate = "cellfate.cli:main"
