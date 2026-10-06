@@ -1,5 +1,6 @@
 import csv
 import importlib.util
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -113,7 +114,22 @@ class LarryImportTests(unittest.TestCase):
             with patch("cellfate.lineage_validation.LARRY_SHA256", sha256(path)):
                 result = run_larry(path, output)
             data = read_larry_header(path)
+            posthoc = result["posthoc_secondary_baselines"]["direct_timepoint_knn"]
+            self.assertEqual(posthoc["status"], "posthoc_not_in_locked_primary_plan")
+            self.assertEqual(set(posthoc["metrics_by_source_day"]), {"2", "4"})
+            self.assertTrue(all(1 <= count <= 5 for count in posthoc["actual_k_by_day"].values()))
+            with (output / "selection.json").open(encoding="utf-8") as handle:
+                selection = json.load(handle)
+            id_to_index = {value: i for i, value in enumerate(data["ids"])}
+            training_clones = {int(data["clones"][id_to_index[cell_id]])
+                               for cell_id in selection["training_ids"]}
+            with (output / "posthoc-knn-audit.json").open(encoding="utf-8") as handle:
+                knn_audit = json.load(handle)
+            self.assertTrue(knn_audit)
+            self.assertTrue(all(set(row["neighbor_training_clone_columns"]) <= training_clones
+                                 for row in knn_audit))
             test_clones = set(result["selected_test_clones"])
+            self.assertFalse(training_clones & test_clones)
             with (output / "cells.csv").open() as handle:
                 reader = csv.DictReader(handle)
                 self.assertFalse(any("clone" in c for c in reader.fieldnames))

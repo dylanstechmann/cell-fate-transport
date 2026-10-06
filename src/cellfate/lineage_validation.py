@@ -269,6 +269,7 @@ def run_larry(path, output):
         terminal_counts.append(len(rows))
     truth = np.array(truth)
     metrics, local_audit = {}, []
+    transport_predictions_by_day = {}
     for time, source in cohort["sources"].items():
         predictions = []
         for k, clone in enumerate(cohort["clones"]):
@@ -282,7 +283,74 @@ def run_larry(path, output):
             local_audit.append({"clone_column": int(clone), "source_day": time, "source_n": len(rows),
                                 "terminal_n": terminal_counts[k], "prediction": averaged.tolist(),
                                 "observed_terminal_frequency": truth[k].tolist()})
+        transport_predictions_by_day[time] = np.asarray(predictions)
         metrics[str(int(time))] = score_clones(predictions, truth, prior)
+
+    # A direct-timepoint nearest-neighbor comparator was not part of the locked
+    # primary plan. Fit clone prototypes and terminal outcomes only from the
+    # training split, then keep its scores in a separate post hoc result block.
+    knn_k = 5
+    knn_metrics, knn_local_audit, knn_transport_comparisons = {}, [], {}
+    training_times = data["times"][cohort["training"]]
+    terminal_reference_clones = data["clones"][cohort["reference"]]
+    terminal_outcomes = {}
+    actual_k_by_day = {}
+    for clone in sorted(set(terminal_reference_clones)):
+        rows = cohort["reference"][terminal_reference_clones == clone]
+        frequency = np.zeros(len(classes))
+        for row in rows:
+            frequency[class_index[data["states"][row]]] += 1 / len(rows)
+        terminal_outcomes[int(clone)] = frequency
+
+    for time, source in cohort["sources"].items():
+        training_rows_at_time = cohort["training"][training_times == time]
+        prototypes = {}
+        for clone in sorted(set(data["clones"][training_rows_at_time])):
+            if int(clone) not in terminal_outcomes:
+                continue
+            rows = training_rows_at_time[data["clones"][training_rows_at_time] == clone]
+            prototypes[int(clone)] = features[[row_lookup[int(row)] for row in rows]].mean(axis=0)
+        if not prototypes:
+            raise ValueError(f"no training clone has both day-{int(time)} features and terminal outcomes")
+        neighbor_clones = np.array(sorted(prototypes), dtype=int)
+        prototype_matrix = np.vstack([prototypes[int(clone)] for clone in neighbor_clones])
+        outcome_matrix = np.vstack([terminal_outcomes[int(clone)] for clone in neighbor_clones])
+        actual_k = min(knn_k, len(neighbor_clones))
+        actual_k_by_day[str(int(time))] = actual_k
+        predictions = []
+        for test_clone in cohort["clones"]:
+            rows = source[data["clones"][source] == test_clone]
+            query = features[[row_lookup[int(row)] for row in rows]].mean(axis=0)
+            squared_distances = np.sum((prototype_matrix - query) ** 2, axis=1)
+            nearest = np.lexsort((neighbor_clones, squared_distances))[:actual_k]
+            prediction = outcome_matrix[nearest].mean(axis=0)
+            predictions.append(prediction)
+            clone_index = int(np.flatnonzero(cohort["clones"] == test_clone)[0])
+            knn_local_audit.append({
+                "method": "direct_timepoint_knn_posthoc",
+                "clone_column": int(test_clone), "source_day": time, "source_n": len(rows),
+                "k": actual_k,
+                "neighbor_training_clone_columns": neighbor_clones[nearest].astype(int).tolist(),
+                "neighbor_squared_distances": squared_distances[nearest].astype(float).tolist(),
+                "prediction": prediction.tolist(),
+                "observed_terminal_frequency": truth[clone_index].tolist(),
+            })
+        predictions = np.asarray(predictions)
+        scored = score_clones(predictions, truth, prior)
+        scored[f"direct_timepoint_knn_brier"] = scored.pop("transport_brier")
+        scored[f"direct_timepoint_knn_total_variation"] = scored.pop("transport_total_variation")
+        scored["paired_brier_improvement_over_training_prior"] = scored.pop("paired_brier_improvement")
+        knn_metrics[str(int(time))] = scored
+
+        transport_losses = np.sum((transport_predictions_by_day[time] - truth) ** 2, axis=1)
+        knn_losses = np.sum((predictions - truth) ** 2, axis=1)
+        sampled = np.random.default_rng(20261004).integers(0, len(truth), (2000, len(truth)))
+        transport_minus_knn = transport_losses - knn_losses
+        knn_transport_comparisons[str(int(time))] = {
+            "estimate_transport_brier_minus_knn_brier": float(transport_minus_knn.mean()),
+            "ci95": list(map(float, np.quantile(transport_minus_knn[sampled].mean(axis=1), [0.025, 0.975]))),
+            "interpretation": "Positive values favor the post hoc direct-timepoint kNN comparator; this comparison was not prespecified.",
+        }
     manifest = {"schema_version": 1, "source_url": LARRY_URL, "source_sha256": digest,
                 "source_bytes": path.stat().st_size, "paper": PAPER_DOI, "geo": "GSE140802",
                 "source_license": "No explicit data redistribution license identified; data are not redistributed.",
@@ -306,11 +374,27 @@ def run_larry(path, output):
                 "selected_gene_names": data["genes"][fitted["columns"]].tolist(),
                 "inference_input_sha256": transport_report["input_sha256"],
                 "maps": transport_report["maps"], "metrics_by_source_day": metrics,
+                "posthoc_secondary_baselines": {
+                    "direct_timepoint_knn": {
+                        "status": "posthoc_not_in_locked_primary_plan",
+                        "k": knn_k,
+                        "actual_k_by_day": actual_k_by_day,
+                        "method": "Mean source-cell training-clone prototype in the training-fitted PCA space; unweighted mean of the five nearest eligible training-clone day-6 frequency outcomes. Ties break by clone column index.",
+                        "metrics_by_source_day": knn_metrics,
+                        "paired_comparison_to_transport_by_source_day": knn_transport_comparisons,
+                        "limitations": [
+                            "This secondary comparator was specified after the locked primary analysis and must not replace or retune its transport result.",
+                            "Neighboring clone profiles are an algorithmic baseline, not observed lineage links.",
+                            "A kNN score is not evidence of rejuvenation, intervention efficacy or generalization to another experiment.",
+                        ],
+                    }
+                },
                 "protocol": "docs/LARRY_VALIDATION_PLAN.md; locked before predictive metrics",
                 "interpretation": "Within-experiment held-out-clone frequency prediction; not individual lineage links or human rejuvenation.",
                 "uncertainty": "Clone bootstrap conditional on fixed reference, transforms and sampled terminal cells; not calibrated fate confidence."}
     (output / "validation.json").write_text(json.dumps(manifest, indent=2, allow_nan=False) + "\n")
     (output / "clone-audit.json").write_text(json.dumps(local_audit, indent=2, allow_nan=False) + "\n")
+    (output / "posthoc-knn-audit.json").write_text(json.dumps(knn_local_audit, indent=2, allow_nan=False) + "\n")
     (output / "selection.json").write_text(json.dumps({"training_ids": data["ids"][cohort["training"]].tolist(),
         "test_source_ids": {str(int(t)): data["ids"][rows].tolist() for t, rows in cohort["sources"].items()},
         "held_out_terminal_ids": data["ids"][cohort["truth"]].tolist()}, indent=2) + "\n")

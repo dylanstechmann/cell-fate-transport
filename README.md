@@ -141,6 +141,13 @@ A further independent experiment should test batch/well sensitivity, fate
 calibration and stability under sampling/epsilon changes. Those checks are
 still needed before biological deployment.
 
+The validation command also computes a fixed-k direct-timepoint clone-neighbor
+comparator as a **post hoc secondary analysis**, separate from the locked
+transport result. Its method, output fields and interpretation limits are in
+[`docs/LARRY_POSTHOC_BASELINE.md`](docs/LARRY_POSTHOC_BASELINE.md). The existing
+checked-in report contains only the prespecified primary analysis; rerun from
+the pinned source data before citing the new comparison.
+
 Portfolio links: [regen-benchmark-kit](https://github.com/dylanstechmann/regen-benchmark-kit)
 for supervised evaluation; [senescence-module-score](https://github.com/dylanstechmann/senescence-module-score)
 for exploratory expression summaries. Their outputs require appropriate
