@@ -1,5 +1,8 @@
 # Cell Fate Transport
 
+This is a personal hobby and learning project, developed with substantial
+assistance from AI coding tools.
+
 **Compare cell-state populations across measured time points, and make the
 assumptions behind inferred fates inspectable.**
 
@@ -175,7 +178,7 @@ transport result. Its method, output fields and interpretation limits are in
 checked-in report contains only the prespecified primary analysis; rerun from
 the pinned source data before citing the new comparison.
 
-Portfolio links: [regen-benchmark-kit](https://github.com/dylanstechmann/regen-benchmark-kit)
+Related projects: [regen-benchmark-kit](https://github.com/dylanstechmann/regen-benchmark-kit)
 for supervised evaluation; [senescence-module-score](https://github.com/dylanstechmann/senescence-module-score)
 for exploratory expression summaries. Their outputs require appropriate
 preprocessing before becoming comparable trajectory features.
