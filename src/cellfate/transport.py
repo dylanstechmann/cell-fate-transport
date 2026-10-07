@@ -95,6 +95,95 @@ def transport(source, target, *, source_mass=None, target_mass=None, epsilon=0.5
     raise RuntimeError(f"Sinkhorn did not converge in {max_iterations} iterations (marginal L1 error {error:.3g})")
 
 
+@dataclass
+class UnbalancedTransportResult:
+    coupling: np.ndarray
+    transition: np.ndarray
+    source_mass: np.ndarray
+    target_mass: np.ndarray
+    realized_source_mass: np.ndarray
+    realized_target_mass: np.ndarray
+    implied_relative_mass_change: np.ndarray
+    iterations: int
+    transport_cost: float
+    epsilon: float
+    growth_relaxation: float
+
+
+def unbalanced_transport(source, target, *, source_mass=None, target_mass=None, epsilon=0.5,
+                         growth_relaxation=1.0, tolerance=1e-8, max_iterations=20000,
+                         max_pairs=4_000_000):
+    """KL-relaxed entropic transport that lets row and column mass deviate.
+
+    Balanced transport holds both marginals fixed, so every source cell must send
+    exactly its own mass onward. When one subpopulation actually proliferated, that
+    constraint has to be satisfied by moving mass between unrelated states, and the
+    resulting transition can claim a transfer that did not happen. Relaxing the
+    marginals with a KL penalty lets a row carry more or less mass than it started
+    with.
+
+    The objective adds ``growth_relaxation * KL`` on each marginal. Large values
+    approach balanced transport; small values let mass deviate freely at the cost
+    of a weaker identification. The scaling iterations gain the standard exponent
+    ``tau / (tau + epsilon)`` on each update.
+
+    ``implied_relative_mass_change`` is each source row's realized mass divided by
+    its requested mass. It is **model-implied**, not measured: it is whatever the
+    relaxed objective found convenient given the features, epsilon and this
+    penalty. Changing cell counts between snapshots do not identify proliferation,
+    death or sampling depth, and this function does not separate them. Use it to
+    test whether a balanced assumption is distorting a transition, not to report a
+    growth rate.
+    """
+    x, y = np.asarray(source, dtype=float), np.asarray(target, dtype=float)
+    if (x.ndim != 2 or y.ndim != 2 or not x.size or not y.size or x.shape[1] != y.shape[1]
+            or not np.isfinite(x).all() or not np.isfinite(y).all()):
+        raise ValueError("source and target must be nonempty finite matrices with equal feature count")
+    if (not np.isfinite(epsilon) or epsilon <= 0 or not np.isfinite(tolerance)
+            or not 0 < tolerance < 1):
+        raise ValueError("epsilon must be positive and tolerance must lie in (0, 1)")
+    if not np.isfinite(growth_relaxation) or growth_relaxation <= 0:
+        raise ValueError("growth_relaxation must be positive and finite")
+    for name, value in [("max_iterations", max_iterations), ("max_pairs", max_pairs)]:
+        if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+            raise ValueError(f"{name} must be a positive integer")
+    if len(x) * len(y) > max_pairs:
+        raise ValueError("dense pair limit exceeded; subsample transparently or use a scalable OT library")
+    a = probability_mass(source_mass, len(x))
+    b = probability_mass(target_mass, len(y))
+    costs = cdist(x, y, metric="sqeuclidean") / x.shape[1]
+    with np.errstate(over="ignore", invalid="ignore"):
+        log_kernel = -costs / epsilon
+    if not np.isfinite(log_kernel).all():
+        raise ValueError("feature scale or epsilon causes overflow; rescale features explicitly")
+    exponent = growth_relaxation / (growth_relaxation + epsilon)
+    log_a, log_b = np.log(a), np.log(b)
+    log_u = np.zeros(len(x))
+    log_v = np.zeros(len(y))
+    for iteration in range(1, max_iterations + 1):
+        log_u = exponent * (log_a - logsumexp(log_kernel + log_v[None, :], axis=1))
+        log_v = exponent * (log_b - logsumexp(log_kernel + log_u[:, None], axis=0))
+        if iteration % 10 == 0 or iteration == max_iterations:
+            plan = np.exp(log_u[:, None] + log_kernel + log_v[None, :])
+            if not np.isfinite(plan).all():
+                raise RuntimeError("unbalanced transport plan left the finite range")
+            previous = locals().get("_previous_plan")
+            if previous is not None and float(np.abs(plan - previous).sum()) <= tolerance:
+                break
+            _previous_plan = plan
+    else:
+        raise RuntimeError(
+            f"unbalanced scaling did not settle in {max_iterations} iterations; "
+            "raise max_iterations or growth_relaxation")
+    plan = np.exp(log_u[:, None] + log_kernel + log_v[None, :])
+    row_sum, col_sum = plan.sum(axis=1), plan.sum(axis=0)
+    if np.any(row_sum == 0):
+        raise RuntimeError("an unbalanced transport row underflowed to zero")
+    return UnbalancedTransportResult(
+        plan, plan / row_sum[:, None], a, b, row_sum, col_sum, row_sum / a,
+        iteration, float(np.sum(plan * costs)), float(epsilon), float(growth_relaxation))
+
+
 def pull_back_fates(transitions, terminal_labels):
     """Compose row-conditional maps backwards under a Markov assumption.
 

@@ -12,7 +12,7 @@ import scipy
 from scipy.special import entr
 
 from cellfate import __version__
-from cellfate.transport import build_sankey_data, compose_transitions, probability_mass, pull_back_fates, transport
+from cellfate.transport import build_sankey_data, compose_transitions, probability_mass, pull_back_fates, transport, unbalanced_transport
 
 
 def read_cells(path):
@@ -52,7 +52,15 @@ def read_cells(path):
     return rows, features, times, x, mass, hashlib.sha256(raw).hexdigest()
 
 
-def infer(path, output, *, epsilon=0.5, tolerance=1e-8, max_iterations=20000, max_pairs=4_000_000):
+def infer(path, output, *, epsilon=0.5, tolerance=1e-8, max_iterations=20000, max_pairs=4_000_000,
+          growth_relaxation=None):
+    """Infer adjacent couplings. Balanced transport is the default and unchanged.
+
+    ``growth_relaxation`` is opt-in. When set, each adjacent pair is solved with
+    KL-relaxed marginals instead, which lets a source row carry more or less mass
+    than it started with. That is useful for asking whether the balanced
+    assumption is distorting a transition; it does not measure proliferation.
+    """
     output = Path(output)
     if output.exists():
         raise FileExistsError(f"output already exists: {output}")
@@ -60,10 +68,18 @@ def infer(path, output, *, epsilon=0.5, tolerance=1e-8, max_iterations=20000, ma
     levels = sorted(set(times))
     # Stable source/target ordering is reused for every adjacent map and fate table.
     indices = [np.flatnonzero(times == t) for t in levels]
+    if growth_relaxation is not None and (not np.isfinite(growth_relaxation) or growth_relaxation <= 0):
+        raise ValueError("growth_relaxation must be positive and finite when supplied")
     maps = []
     for left, right in zip(indices[:-1], indices[1:]):
-        maps.append(transport(x[left], x[right], source_mass=mass[left], target_mass=mass[right],
-                              epsilon=epsilon, tolerance=tolerance, max_iterations=max_iterations, max_pairs=max_pairs))
+        if growth_relaxation is None:
+            maps.append(transport(x[left], x[right], source_mass=mass[left], target_mass=mass[right],
+                                  epsilon=epsilon, tolerance=tolerance, max_iterations=max_iterations, max_pairs=max_pairs))
+        else:
+            maps.append(unbalanced_transport(
+                x[left], x[right], source_mass=mass[left], target_mass=mass[right],
+                epsilon=epsilon, growth_relaxation=growth_relaxation, tolerance=tolerance,
+                max_iterations=max_iterations, max_pairs=max_pairs))
     classes, fates = pull_back_fates([item.transition for item in maps], [rows[i]["state"] for i in indices[-1]])
     class_columns = {f"p_state_{i}": state for i, state in enumerate(classes)}
     terminal_prior = probability_mass(mass[indices[-1]], len(indices[-1])) @ fates[-1]
@@ -72,6 +88,9 @@ def infer(path, output, *, epsilon=0.5, tolerance=1e-8, max_iterations=20000, ma
               "terminal_class_mass": dict(zip(classes, map(float, terminal_prior))),
               "configuration": {"epsilon": epsilon, "tolerance": tolerance, "max_iterations": max_iterations,
                   "max_pairs": max_pairs, "cost": "mean squared feature distance; no automatic normalization",
+                  "marginals": ("balanced: supplied marginals held fixed" if growth_relaxation is None
+                                else f"KL-relaxed with growth_relaxation={growth_relaxation}"),
+                  "growth_relaxation": growth_relaxation,
                   "solver": "log-domain Sinkhorn; dual warm starts at 8, 4, 2 times epsilon when iteration budget permits",
                   "mass": "positive input masses normalized independently within each time point",
                   "composition": "row-conditional transitions; Markov assumption"},
@@ -79,7 +98,12 @@ def infer(path, output, *, epsilon=0.5, tolerance=1e-8, max_iterations=20000, ma
                               "scipy": scipy.__version__, "cellfate": __version__},
               "maps": [], "warnings": [
                   "Snapshot couplings are geometric hypotheses, not observed lineages or causal effects.",
-                  "Balanced transport fixes the supplied marginals; it cannot estimate cell proliferation or death.",
+                  ("Balanced transport fixes the supplied marginals; it cannot estimate cell proliferation or death."
+                   if growth_relaxation is None else
+                   "Marginals were KL-relaxed, so rows may carry more or less mass than supplied. The implied "
+                   "relative mass change is a model artifact of this penalty, epsilon and the features; its level "
+                   "is arbitrary and its ordering shifts with growth_relaxation. It does not measure proliferation, "
+                   "death or sampling depth, and it does not separate them."),
                   "Fate probabilities depend on features, sampling, terminal labels and epsilon; they are not calibrated confidence.",
                   "Each pair is matched regardless of time interval; no physical velocity or continuous-time rate is inferred.",
                   "No batch correction or raw RNA preprocessing is performed; choose a shared feature space upstream."]}
@@ -95,9 +119,23 @@ def infer(path, output, *, epsilon=0.5, tolerance=1e-8, max_iterations=20000, ma
                             source_mass=item.source_mass, target_mass=item.target_mass,
                             source_ids=np.array([rows[i]["cell_id"] for i in left]),
                             target_ids=np.array([rows[i]["cell_id"] for i in right]))
-        report["maps"].append({"file": name, "source_time": float(levels[k]), "target_time": float(levels[k + 1]),
-            "source_n": len(left), "target_n": len(right), "iterations": item.iterations,
-            "marginal_l1_error": item.marginal_l1_error, "transport_cost": item.transport_cost})
+        entry = {"file": name, "source_time": float(levels[k]), "target_time": float(levels[k + 1]),
+                 "source_n": len(left), "target_n": len(right), "iterations": item.iterations,
+                 "transport_cost": item.transport_cost}
+        if growth_relaxation is None:
+            entry["marginal_l1_error"] = item.marginal_l1_error
+        else:
+            change = item.implied_relative_mass_change
+            entry.update({
+                "marginals": "kl_relaxed",
+                "implied_relative_mass_change_min": float(change.min()),
+                "implied_relative_mass_change_median": float(np.median(change)),
+                "implied_relative_mass_change_max": float(change.max()),
+                "realized_total_mass": float(item.realized_source_mass.sum()),
+                "implied_mass_change_interpretation":
+                    "model-implied only; not a measured growth or death rate",
+            })
+        report["maps"].append(entry)
     fate_rows = []
     for t, idx, probabilities in zip(levels, indices, fates):
         for i, probability in zip(idx, probabilities):
@@ -153,12 +191,29 @@ def infer(path, output, *, epsilon=0.5, tolerance=1e-8, max_iterations=20000, ma
         }
 
     (output / "report.json").write_text(json.dumps(report, indent=2, allow_nan=False) + "\n")
+    relaxed = growth_relaxation is not None
+    marginal_heading = ("Implied mass change (min/median/max)" if relaxed else "Marginal L1 error")
     lines = ["# Cell-state transport", "", f"{len(rows)} cells, {len(levels)} snapshots; input SHA-256 `{digest}`.", "",
-             "| Interval | Source / target cells | Iterations | Marginal L1 error | Cost |",
+             f"Marginals: {report['configuration']['marginals']}.", "",
+             f"| Interval | Source / target cells | Iterations | {marginal_heading} | Cost |",
              "|---|---:|---:|---:|---:|"]
     for item in report["maps"]:
+        if relaxed:
+            marginal_cell = (f"{item['implied_relative_mass_change_min']:.3g} / "
+                             f"{item['implied_relative_mass_change_median']:.3g} / "
+                             f"{item['implied_relative_mass_change_max']:.3g}")
+        else:
+            marginal_cell = f"{item['marginal_l1_error']:.3g}"
         lines.append(f"| {item['source_time']:g} → {item['target_time']:g} | {item['source_n']} / {item['target_n']} | "
-                     f"{item['iterations']} | {item['marginal_l1_error']:.3g} | {item['transport_cost']:.4f} |")
+                     f"{item['iterations']} | {marginal_cell} | {item['transport_cost']:.4f} |")
+    if relaxed:
+        lines += ["",
+                  f"`--growth-relaxation {growth_relaxation:g}` relaxed both marginals with a KL penalty, "
+                  "so a source row may carry more or less mass than it was given. The implied relative "
+                  "mass change is a model artifact of this penalty, epsilon and the features: its level "
+                  "is arbitrary and its ordering shifts with the penalty. It is not a measured "
+                  "proliferation or death rate, and it does not separate growth, death and sampling "
+                  "depth. Balanced transport remains the default."]
     lines += ["", "Class columns: " + ", ".join(f"`{k}` = `{v}`" for k, v in class_columns.items()) + "."]
     if len(levels) > 2:
         lines += [

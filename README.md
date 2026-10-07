@@ -101,10 +101,37 @@ counts. Changing sample counts does not identify population growth. Physical
 time gaps are recorded but do not determine a velocity or transition rate.
 There is no gene-regulatory, intervention-response or rejuvenation model here.
 
+### Optional: relaxing the balanced assumption
+
+`cellfate infer --growth-relaxation TAU` is **off by default** and does not change
+the default solver. It replaces the fixed marginals with a KL penalty, letting a
+source row carry more or less mass than it started with.
+
+This exists because a fixed marginal can manufacture a transfer. In the shipped
+test fixture two well-separated states are sampled at two times, and state A
+triples while B is unchanged. Balanced transport must place that extra A′ mass
+somewhere, so it assigns about **half of every B cell's transition to A′** — a
+transition that never happened. With `--growth-relaxation 1.0` the same data give
+B→A′ below 1e-6 and recover the true structure.
+
+The report then carries an `implied_relative_mass_change` per source row. Read
+it as a diagnostic, not a rate: its level is arbitrary (total mass is no longer
+conserved), and its magnitude moves with the penalty — on that fixture the
+implied A/B ratio ranges from about 1.8 to 2.5 across penalties while the true
+ratio is 3. The direction is stable; the number is not. It does not measure
+proliferation or death and does not separate them from sampling depth. As the
+penalty grows the solution returns to balanced transport, with marginal
+deviation shrinking roughly as epsilon/tau.
+
+Use it to ask whether a balanced assumption is distorting a transition. Do not
+report it as a growth rate.
+
 For growth-aware reprogramming analysis, see the established
 [Waddington-OT project](https://broadinstitute.github.io/wot/).
-This package is an independently implemented, narrower baseline; it does not
-reproduce WOT's unbalanced transport, growth refinement or RNA processing.
+This package is an independently implemented, narrower baseline. Its optional
+KL-relaxed solver is a diagnostic for the balanced assumption, not a
+reimplementation of WOT's growth refinement, proliferation estimation or RNA
+processing.
 
 ## Validation and research handoff
 

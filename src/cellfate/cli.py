@@ -85,13 +85,19 @@ def main(argv=None):
     run.add_argument("--tolerance", type=float, default=1e-8)
     run.add_argument("--max-iterations", type=int, default=20000)
     run.add_argument("--max-pairs", type=int, default=4_000_000)
+    run.add_argument("--growth-relaxation", type=float, default=None,
+                     help=("opt-in: solve with KL-relaxed marginals using this penalty instead of "
+                           "balanced transport, letting rows carry more or less mass. The implied "
+                           "mass change is a model artifact, not a measured growth rate. Omit for "
+                           "the default balanced solver."))
     args = parser.parse_args(argv)
     try:
         if args.command == "demo":
             result = demo(args.out, seed=args.seed, plot=args.plot)
             print(json.dumps(result, indent=2))
         else:
-            report, _ = infer(args.csv, args.out, epsilon=args.epsilon, tolerance=args.tolerance,
+            report, _ = infer(args.csv, args.out, growth_relaxation=args.growth_relaxation,
+                              epsilon=args.epsilon, tolerance=args.tolerance,
                               max_iterations=args.max_iterations, max_pairs=args.max_pairs)
             print(json.dumps({"n_cells": report["n_cells"], "maps": len(report["maps"]), "input_sha256": report["input_sha256"]}))
     except (ValueError, OSError, RuntimeError) as exc:
